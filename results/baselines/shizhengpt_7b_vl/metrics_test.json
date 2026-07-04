@@ -1,0 +1,119 @@
+{
+  "label_order": [
+    "TonguePale",
+    "TipSideRed",
+    "Spot",
+    "Ecchymosis",
+    "Crack",
+    "Toothmark",
+    "FurThick",
+    "FurYellow"
+  ],
+  "per_label": {
+    "TonguePale": {
+      "threshold": 0.6649999999999999,
+      "single_class": false,
+      "support_pos": 93,
+      "support_neg": 802,
+      "auroc": 0.8032740728823103,
+      "ap": 0.3232176787957217,
+      "f1": 0.3883495145631068,
+      "precision": 0.35398230088495575,
+      "recall": 0.43010752688172044
+    },
+    "TipSideRed": {
+      "threshold": 0.3549999999999999,
+      "single_class": false,
+      "support_pos": 369,
+      "support_neg": 526,
+      "auroc": 0.739157315527528,
+      "ap": 0.6962640911258652,
+      "f1": 0.6497109826589595,
+      "precision": 0.5665322580645161,
+      "recall": 0.7615176151761518
+    },
+    "Spot": {
+      "threshold": 0.37999999999999995,
+      "single_class": false,
+      "support_pos": 422,
+      "support_neg": 473,
+      "auroc": 0.8876887468312575,
+      "ap": 0.8870995108216745,
+      "f1": 0.8059360730593608,
+      "precision": 0.7775330396475771,
+      "recall": 0.8364928909952607
+    },
+    "Ecchymosis": {
+      "threshold": 0.26499999999999996,
+      "single_class": false,
+      "support_pos": 82,
+      "support_neg": 813,
+      "auroc": 0.7693876938769387,
+      "ap": 0.32767857907485587,
+      "f1": 0.3651452282157676,
+      "precision": 0.27672955974842767,
+      "recall": 0.5365853658536586
+    },
+    "Crack": {
+      "threshold": 0.16999999999999998,
+      "single_class": false,
+      "support_pos": 747,
+      "support_neg": 148,
+      "auroc": 0.8385162270704438,
+      "ap": 0.9608919827954756,
+      "f1": 0.9125964010282777,
+      "precision": 0.8776266996291718,
+      "recall": 0.9504685408299867
+    },
+    "Toothmark": {
+      "threshold": 0.3499999999999999,
+      "single_class": false,
+      "support_pos": 541,
+      "support_neg": 354,
+      "auroc": 0.8138987228087764,
+      "ap": 0.8674785461321947,
+      "f1": 0.8134206219312602,
+      "precision": 0.7298091042584435,
+      "recall": 0.9186691312384473
+    },
+    "FurThick": {
+      "threshold": 0.05,
+      "single_class": false,
+      "support_pos": 870,
+      "support_neg": 25,
+      "auroc": 0.9158160919540229,
+      "ap": 0.9965445595179019,
+      "f1": 0.9858356940509915,
+      "precision": 0.9720670391061452,
+      "recall": 1.0
+    },
+    "FurYellow": {
+      "threshold": 0.8699999999999999,
+      "single_class": false,
+      "support_pos": 156,
+      "support_neg": 739,
+      "auroc": 0.9415703827070538,
+      "ap": 0.8269292353266385,
+      "f1": 0.7717041800643086,
+      "precision": 0.7741935483870968,
+      "recall": 0.7692307692307693
+    }
+  },
+  "macro": {
+    "auroc": 0.8386636567072914,
+    "ap": 0.7357630229487909,
+    "f1": 0.7115873369465041,
+    "precision": 0.6660591937157918,
+    "recall": 0.7753839800257494
+  },
+  "micro": {
+    "auroc": 0.8970459045763138,
+    "ap": 0.8877130104712654,
+    "f1": 0.8278898040329452,
+    "precision": 0.7748538011695907,
+    "recall": 0.8887195121951219
+  },
+  "num_samples": 895,
+  "num_valid_metric_labels": 8,
+  "loss": 0.40527098245460896
+}

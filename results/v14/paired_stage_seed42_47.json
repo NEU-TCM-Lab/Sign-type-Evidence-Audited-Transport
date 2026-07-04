@@ -1,0 +1,108 @@
+{
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46,
+    47
+  ],
+  "stage_stats": {
+    "baseline": {
+      "mean": 71.4723,
+      "std": 1.0184
+    },
+    "plus_c2": {
+      "mean": 71.908,
+      "std": 1.3574
+    },
+    "plus_c2_c1": {
+      "mean": 72.4558,
+      "std": 1.1897
+    }
+  },
+  "paired_gains": {
+    "baseline_to_c2": {
+      "mean": 0.4357,
+      "std": 0.7611,
+      "bootstrap_ci95": {
+        "lo": -0.1099,
+        "hi": 0.9673
+      },
+      "sign_count": {
+        "positive": 4,
+        "zero": 0,
+        "negative": 2
+      }
+    },
+    "c2_to_c2_c1": {
+      "mean": 0.5478,
+      "std": 0.3195,
+      "bootstrap_ci95": {
+        "lo": 0.3215,
+        "hi": 0.7831
+      },
+      "sign_count": {
+        "positive": 6,
+        "zero": 0,
+        "negative": 0
+      }
+    }
+  },
+  "rows": [
+    {
+      "seed": 42,
+      "baseline": 73.4244,
+      "plus_c2": 74.3658,
+      "plus_c2_c1": 74.6687,
+      "c2_gain": 0.9413,
+      "c1_gain": 0.3029,
+      "color_gamma": 1.0
+    },
+    {
+      "seed": 43,
+      "baseline": 71.2638,
+      "plus_c2": 72.0198,
+      "plus_c2_c1": 72.7315,
+      "c2_gain": 0.756,
+      "c1_gain": 0.7117,
+      "color_gamma": 2.0
+    },
+    {
+      "seed": 44,
+      "baseline": 70.6648,
+      "plus_c2": 70.9642,
+      "plus_c2_c1": 71.635,
+      "c2_gain": 0.2994,
+      "c1_gain": 0.6707,
+      "color_gamma": 0.2
+    },
+    {
+      "seed": 45,
+      "baseline": 71.6681,
+      "plus_c2": 70.9966,
+      "plus_c2_c1": 71.4559,
+      "c2_gain": -0.6715,
+      "c1_gain": 0.4594,
+      "color_gamma": 1.0
+    },
+    {
+      "seed": 46,
+      "baseline": 70.8986,
+      "plus_c2": 72.3198,
+      "plus_c2_c1": 72.4439,
+      "c2_gain": 1.4212,
+      "c1_gain": 0.1241,
+      "color_gamma": 0.2
+    },
+    {
+      "seed": 47,
+      "baseline": 70.9139,
+      "plus_c2": 70.7817,
+      "plus_c2_c1": 71.7998,
+      "c2_gain": -0.1321,
+      "c1_gain": 1.0181,
+      "color_gamma": 2.0
+    }
+  ]
+}

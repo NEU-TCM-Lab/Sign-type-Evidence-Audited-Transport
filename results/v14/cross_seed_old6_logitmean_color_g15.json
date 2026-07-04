@@ -1,0 +1,97 @@
+{
+  "seeds": [
+    42,
+    43,
+    44,
+    45,
+    46,
+    47
+  ],
+  "aggregate": "logit_mean",
+  "pale_gamma": 1.5,
+  "threshold_step": 0.01,
+  "val_macro_f1": 74.197,
+  "test_macro_f1": 74.2228,
+  "per_class": [
+    {
+      "class_name": "TonguePale",
+      "support_pos": 93,
+      "support_neg": 802,
+      "threshold": 0.81,
+      "val_f1": 46.696,
+      "precision": 48.913,
+      "recall": 48.3871,
+      "test_f1": 48.6486
+    },
+    {
+      "class_name": "TipSideRed",
+      "support_pos": 369,
+      "support_neg": 526,
+      "threshold": 0.39,
+      "val_f1": 72.7756,
+      "precision": 63.0072,
+      "recall": 71.5447,
+      "test_f1": 67.0051
+    },
+    {
+      "class_name": "Spot",
+      "support_pos": 422,
+      "support_neg": 473,
+      "threshold": 0.52,
+      "val_f1": 83.6683,
+      "precision": 81.8859,
+      "recall": 78.1991,
+      "test_f1": 80.0
+    },
+    {
+      "class_name": "Ecchymosis",
+      "support_pos": 82,
+      "support_neg": 813,
+      "threshold": 0.33,
+      "val_f1": 31.4815,
+      "precision": 37.0968,
+      "recall": 56.0976,
+      "test_f1": 44.6602
+    },
+    {
+      "class_name": "Crack",
+      "support_pos": 747,
+      "support_neg": 148,
+      "threshold": 0.15,
+      "val_f1": 92.5208,
+      "precision": 88.9851,
+      "recall": 96.2517,
+      "test_f1": 92.4759
+    },
+    {
+      "class_name": "Toothmark",
+      "support_pos": 541,
+      "support_neg": 354,
+      "threshold": 0.27,
+      "val_f1": 86.406,
+      "precision": 76.6667,
+      "recall": 93.5305,
+      "test_f1": 84.2631
+    },
+    {
+      "class_name": "FurThick",
+      "support_pos": 870,
+      "support_neg": 25,
+      "threshold": 0.05,
+      "val_f1": 98.7995,
+      "precision": 97.2067,
+      "recall": 100.0,
+      "test_f1": 98.5836
+    },
+    {
+      "class_name": "FurYellow",
+      "support_pos": 156,
+      "support_neg": 739,
+      "threshold": 0.76,
+      "val_f1": 81.2287,
+      "precision": 80.8219,
+      "recall": 75.641,
+      "test_f1": 78.1457
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "label_order": [
+    "TonguePale",
+    "TipSideRed",
+    "Spot",
+    "Ecchymosis",
+    "Crack",
+    "Toothmark",
+    "FurThick",
+    "FurYellow"
+  ],
+  "macro": {
+    "auroc": 0.795889451482608,
+    "ap": 0.7027003592268244,
+    "f1": 0.6826781316777479,
+    "jaccard": 0.5648485261991625,
+    "precision": 0.6232565424354223,
+    "recall": 0.7776177557398034
+  },
+  "micro": {
+    "auroc": 0.9012696049157656,
+    "ap": 0.892973465152396,
+    "f1": 0.8012661712083677,
+    "jaccard": 0.6684270952927669,
+    "precision": 0.7303060712493729,
+    "recall": 0.8875
+  },
+  "per_label": {
+    "TonguePale": {
+      "auroc": 0.7891963639288875,
+      "ap": 0.28973814436075956,
+      "f1": 0.3673469387755102,
+      "jaccard": 0.225,
+      "precision": 0.26865671641791045,
+      "recall": 0.5806451612903226,
+      "threshold": 0.4,
+      "support_pos": 93,
+      "support_neg": 802,
+      "single_class": false
+    },
+    "TipSideRed": {
+      "auroc": 0.7105783795480539,
+      "ap": 0.6681565422074048,
+      "f1": 0.5959079283887468,
+      "jaccard": 0.424408014571949,
+      "precision": 0.5641646489104116,
+      "recall": 0.6314363143631436,
+      "threshold": 0.4,
+      "support_pos": 369,
+      "support_neg": 526,
+      "single_class": false
+    },
+    "Spot": {
+      "auroc": 0.865412362353837,
+      "ap": 0.8642726499427034,
+      "f1": 0.7709844559585493,
+      "jaccard": 0.627318718381113,
+      "precision": 0.6850828729281768,
+      "recall": 0.8815165876777251,
+      "threshold": 0.2,
+      "support_pos": 422,
+      "support_neg": 473,
+      "single_class": false
+    },
+    "Ecchymosis": {
+      "auroc": 0.6978144781447814,
+      "ap": 0.2580826833253109,
+      "f1": 0.27715355805243447,
+      "jaccard": 0.1608695652173913,
+      "precision": 0.2,
+      "recall": 0.45121951219512196,
+      "threshold": 0.3,
+      "support_pos": 82,
+      "support_neg": 813,
+      "single_class": false
+    },
+    "Crack": {
+      "auroc": 0.8209640363254822,
+      "ap": 0.9534708043577892,
+      "f1": 0.9183800623052959,
+      "jaccard": 0.8490783410138248,
+      "precision": 0.8589743589743589,
+      "recall": 0.9866131191432396,
+      "threshold": 0.15000000000000002,
+      "support_pos": 747,
+      "support_neg": 148,
+      "single_class": false
+    },
+    "Toothmark": {
+      "auroc": 0.6862422590515576,
+      "ap": 0.7592460930995659,
+      "f1": 0.7610062893081762,
+      "jaccard": 0.6142131979695431,
+      "precision": 0.6621067031463749,
+      "recall": 0.8946395563770795,
+      "threshold": 0.35000000000000003,
+      "support_pos": 541,
+      "support_neg": 354,
+      "single_class": false
+    },
+    "FurThick": {
+      "auroc": 0.8567816091954024,
+      "ap": 0.9945978296400468,
+      "f1": 0.9858356940509915,
+      "jaccard": 0.9720670391061452,
+      "precision": 0.9720670391061452,
+      "recall": 1.0,
+      "threshold": 0.05,
+      "support_pos": 870,
+      "support_neg": 25,
+      "single_class": false
+    },
+    "FurYellow": {
+      "auroc": 0.940126123312862,
+      "ap": 0.8340381268810146,
+      "f1": 0.7848101265822784,
+      "jaccard": 0.6458333333333334,
+      "precision": 0.775,
+      "recall": 0.7948717948717948,
+      "threshold": 0.6000000000000001,
+      "support_pos": 156,
+      "support_neg": 739,
+      "single_class": false
+    }
+  },
+  "loss": null,
+  "threshold_source": "val_checkpoint",
+  "eval_limit": null,
+  "actual_token_stats": {
+    "min": 121,
+    "mean": 375.6581115722656,
+    "max": 384,
+    "p50": 377.0,
+    "p90": 377.0,
+    "p95": 377.0
+  }
+}
