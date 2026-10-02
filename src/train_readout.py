@@ -17,6 +17,8 @@ from metrics import compute_metrics, find_best_thresholds, per_class_rows, sigmo
 from ot_readout_head import AttrReadoutHead
 from ot_sign_head import SignOTHead
 from ot_gen_head import OTGenHead, DualOTHead
+from checkpoints import model_config_from_args, build_readout_model
+from data_validation import alignment_order, validate_split_payloads
 from losses import LogitAdjuster, build_loss, compute_pos_prior, loss_uses_logit_adjustment
 
 
@@ -79,6 +81,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--coocc-eps", type=float, default=0.1)
     p.add_argument("--run-name", type=str, default=None)
     p.add_argument("--features-dir", type=Path, default=FEATURES_DIR)
+    p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--epochs", type=int, default=120)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -168,17 +171,21 @@ def main() -> None:
     set_seed(args.seed)
     run_name = args.run_name or f"readout_{args.readout}_{timestamp()}"
     run_dir = RUNS_DIR / run_name
-    run_dir.mkdir(parents=True, exist_ok=False)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     train_pl = torch.load(grid_path("train", args.tag, args.features_dir), map_location="cpu", weights_only=False)
     val_pl = torch.load(grid_path("val", args.tag, args.features_dir), map_location="cpu", weights_only=False)
     test_pl = torch.load(grid_path("test", args.tag, args.features_dir), map_location="cpu", weights_only=False)
+    split_audit = validate_split_payloads({"train": train_pl, "val": val_pl, "test": test_pl})
     if args.extra_tag:   # concat a second patchgrid (e.g. color_seed42) onto patch_features, aligned by id
         for pl, sp in [(train_pl, "train"), (val_pl, "val"), (test_pl, "test")]:
             ex = torch.load(grid_path(sp, args.extra_tag, args.features_dir), map_location="cpu", weights_only=False)
-            eidx = {str(x): i for i, x in enumerate(ex["ids"])}
-            order = [eidx[str(b)] for b in pl["ids"]]
+            order = alignment_order(pl, ex)
+            if pl.get("geometry", "square") != ex.get("geometry", "square"):
+                raise ValueError("Feature grids have different geometry")
+            if pl["mask_weights"].shape != ex["mask_weights"][order].shape or not torch.allclose(
+                    pl["mask_weights"].float(), ex["mask_weights"][order].float(), atol=1e-3, rtol=1e-3):
+                raise ValueError("Additional cache uses a different mask grid")
             ef = ex["patch_features"][order]                       # [N,T,Ce] aligned to base order
             pl["patch_features"] = torch.cat([pl["patch_features"], ef], dim=-1)
             pl["feature_dim"] = int(pl["patch_features"].shape[-1])
@@ -188,9 +195,9 @@ def main() -> None:
     train_ds = GridDataset(train_pl, limit=args.limit_train)
     val_ds, test_ds = GridDataset(val_pl), GridDataset(test_pl)
     print(f"train={len(train_ds)} val={len(val_ds)} test={len(test_ds)} (limit_train={args.limit_train})")
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
-    test_loader = DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=2, pin_memory=True)
+    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=torch.cuda.is_available())
+    val_loader = DataLoader(val_ds, batch_size=128, shuffle=False, num_workers=args.num_workers, pin_memory=torch.cuda.is_available())
+    test_loader = DataLoader(test_ds, batch_size=128, shuffle=False, num_workers=args.num_workers, pin_memory=torch.cuda.is_available())
 
     query_emb = None
     if args.query_emb_path:
@@ -198,16 +205,16 @@ def main() -> None:
         assert list(qd["label_order"]) == LABELS, "query_emb label order mismatch"
         query_emb = qd["emb"]
         print(f"using MLLM text-prototype queries from {args.query_emb_path} shape {tuple(query_emb.shape)}")
+    model_config = model_config_from_args(args, feature_dim, query_emb)
+    run_dir.mkdir(parents=True, exist_ok=False)
+    write_json(run_dir / "split_audit.json", split_audit)
+    write_json(run_dir / "training_config.json", vars(args))
+    input_config = {"tag": args.tag, "extra_tag": args.extra_tag,
+                    "geometry": train_pl.get("geometry", "square")}
+    write_json(run_dir / "model_config.json", model_config)
+    write_json(run_dir / "input_config.json", input_config)
+    model = build_readout_model(model_config, query_emb).to(device)
     if args.readout == "signot":
-        model = SignOTHead(
-            feature_dim=feature_dim, num_labels=len(LABELS), proj_dim=args.proj_dim,
-            branch=args.branch, evidence=args.evidence, ot_k=args.ot_k,
-            eps_init=args.eps_init, sinkhorn_iters=args.sinkhorn_iters, learn_eps=not args.fix_eps,
-            use_mask_mass=args.use_mask_mass, beta_init=args.beta_init,
-            beta_per_class=not args.beta_scalar, proto_div=(args.proto_div_lambda > 0), dropout=args.dropout,
-            ot_demand=args.ot_demand, ot_relax=args.ot_relax, uot_rho=args.uot_rho,
-            partial_m=args.partial_m, partial_tau=args.partial_tau, mass_gate=args.mass_gate,
-        ).to(device)
         # front-end (shared proj/in_norm) is included when --freeze-frontend, so the global path can be
         # held EXACTLY at the baseline (otherwise these shared params drift under the OT objective).
         frontend = [n for n, _ in model.named_parameters() if n.startswith(("in_norm.", "proj."))]
@@ -223,29 +230,6 @@ def main() -> None:
                 if n in frozen:
                     prm.requires_grad_(False)
             print(f"[freeze-global] froze {len(frozen)} params (front-end={args.freeze_frontend}); training OT+beta only")
-    elif args.readout == "otgen":
-        model = OTGenHead(
-            feature_dim=feature_dim, num_labels=len(LABELS), proj_dim=args.proj_dim,
-            ot_k=args.ot_k, eps_init=args.eps_init, sinkhorn_iters=args.sinkhorn_iters,
-            learn_eps=not args.fix_eps, lam_init=args.lam_init, per_class_lam=args.per_class_lam,
-            combine=args.otgen_combine, peak_topk=args.peak_topk, dropout=args.dropout,
-        ).to(device)
-    elif args.readout == "dualot":
-        model = DualOTHead(
-            feature_dim=feature_dim, dino_dim=args.dino_dim, num_labels=len(LABELS), proj_dim=args.proj_dim,
-            ot_k=args.ot_k, eps_init=args.eps_init, sinkhorn_iters=args.sinkhorn_iters,
-            learn_eps=not args.fix_eps, lam_init=args.lam_init, per_class_lam=args.per_class_lam,
-            combine=args.otgen_combine, peak_topk=args.peak_topk, dropout=args.dropout,
-        ).to(device)
-    else:
-        model = AttrReadoutHead(
-            feature_dim=feature_dim, num_labels=len(LABELS), readout=args.readout,
-            mask_guided=not args.no_mask_guided, eps_init=args.eps_init, learn_eps=not args.fix_eps,
-            sinkhorn_iters=args.sinkhorn_iters, uot_rho=args.uot_rho, num_heads=args.num_heads,
-            ot_reg=(args.ot_reg_lambda > 0), ot_reg_eps=args.ot_reg_eps,
-            spatial_reg=(args.spatial_lambda > 0), query_emb=query_emb, dropout=args.dropout,
-        ).to(device)
-
     pos = train_ds.y.sum(0)
     neg = train_ds.y.shape[0] - pos
     pos_weight = torch.clamp(neg / torch.clamp(pos, min=1.0), min=0.2, max=5.0).to(device) if args.pos_weight else None
@@ -304,16 +288,18 @@ def main() -> None:
 
     model.load_state_dict(best_state)
     torch.save({"model_state": best_state, "label_order": LABELS, "thresholds": best_thr,
-                "readout": args.readout, "loss": args.loss}, run_dir / "best.pt")
+                "readout": args.readout, "loss": args.loss, "model_config": model_config,
+                "input_config": input_config}, run_dir / "best.pt")
 
     if args.dump_teacher:
         dump = {"label_order": np.array(LABELS)}
         for split, pl in [("train", train_pl), ("val", val_pl), ("test", test_pl)]:
-            ld = DataLoader(GridDataset(pl), batch_size=128, shuffle=False, num_workers=2)
+            ld = DataLoader(GridDataset(pl), batch_size=128, shuffle=False, num_workers=args.num_workers)
             lg, yy = evaluate(model, ld, device)
             dump[f"{split}_logits"] = lg
             dump[f"{split}_labels"] = yy
             dump[f"{split}_ids"] = np.array(list(pl["ids"])[:len(lg)])
+        Path(args.dump_teacher).parent.mkdir(parents=True, exist_ok=True)
         np.savez(args.dump_teacher, **dump)
         print(f"[dump-teacher] -> {args.dump_teacher} | train_logits {dump['train_logits'].shape} "
               f"ids[0]={dump['train_ids'][0]}", flush=True)
@@ -337,6 +323,7 @@ def main() -> None:
         "selected_by": "per_class_f1_on_validation",
     })
     write_json(run_dir / "summary.json", {
+        "model_config": model_config, "input_config": input_config,
         "readout": args.readout, "tag": args.tag, "loss": args.loss, "experiment_name": exp_name,
         "selection_metric": args.selection_metric, "best_epoch": best_epoch,
         "mask_guided": not args.no_mask_guided,

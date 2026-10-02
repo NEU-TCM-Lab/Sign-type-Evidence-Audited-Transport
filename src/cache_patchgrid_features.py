@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+from geometry import resize_image, bbox_features
+from data_validation import identity_metadata
 import torch
 from tqdm import tqdm
 
@@ -31,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dataset-root", type=Path, default=DATASET_ROOT)
     p.add_argument("--manifest-dir", type=Path, default=MANIFEST_DIR)
     p.add_argument("--features-dir", type=Path, default=FEATURES_DIR)
+    p.add_argument("--geometry", choices=["square", "arpad"], default="square")
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--overwrite", action="store_true")
@@ -63,8 +66,8 @@ def extract_split(args, spec, vision, mean, std, device, dtype, split: str) -> d
         pix, bw = [], []
         for row in batch:
             assert_label_order(row["label_order"])
-            pix.append(preprocess_image(args.dataset_root / row["image_path"], size, mean, std))
-            w, _s, fb = mask_grid_weights(args.dataset_root / row["mask_path"], size, patch, grid)
+            pix.append(preprocess_image(args.dataset_root / row["image_path"], size, mean, std, args.geometry))
+            w, _s, fb = mask_grid_weights(args.dataset_root / row["mask_path"], size, patch, grid, args.geometry)
             bw.append((w, fb))
         pixel_values = torch.cat(pix, dim=0).to(device=device, dtype=dtype)
         extra = {"interpolate_pos_encoding": True} if args.backbone == "dinov2" else {}
@@ -80,7 +83,7 @@ def extract_split(args, spec, vision, mean, std, device, dtype, split: str) -> d
                 fallback_count += 1
             patch_feats.append(patch_tokens[i].to(torch.float16).cpu())   # [n_patches,D]
             mask_ws.append(w.to(torch.float16))                            # [n_patches]
-            bboxes.append(torch.tensor(row["bbox_norm"], dtype=torch.float32))
+            bboxes.append(torch.tensor(bbox_features(row, size, args.geometry), dtype=torch.float32))
             labels.append(torch.tensor(row["labels"], dtype=torch.float32))
             ids.append(row["id"])
 
@@ -95,6 +98,8 @@ def extract_split(args, spec, vision, mean, std, device, dtype, split: str) -> d
         "labels": torch.stack(labels, dim=0),
         "ids": ids, "mask_fallback_count": fallback_count,
     }
+    payload.update(identity_metadata(rows))
+    payload["geometry"] = args.geometry
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_path)
     write_json(out_path.with_suffix(".summary.json"), {

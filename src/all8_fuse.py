@@ -11,6 +11,9 @@ import torch
 from common import FEATURES_DIR, LABELS
 from train_readout import GridDataset, grid_path
 from ensemble_eval import build_model
+from checkpoints import load_run_payload
+from data_validation import alignment_order, validate_split_payloads
+from fusion import select_fusion, evaluate_selected
 
 GAMMAS = [0.0, 0.2, 0.5, 1.0, 1.5, 2.0]
 
@@ -31,14 +34,15 @@ def best_thr(y,p,step=0.01):
 
 @torch.inference_mode()
 def get_logits(run, tag, device, bs=128):
-    plv=torch.load(grid_path("val",tag,FEATURES_DIR),map_location="cpu",weights_only=False)
-    plt_=torch.load(grid_path("test",tag,FEATURES_DIR),map_location="cpu",weights_only=False)
+    plv=load_run_payload(run,tag,"val")
+    plt_=load_run_payload(run,tag,"test")
+    validate_split_payloads({"val": plv, "test": plt_})
     dv,dt=GridDataset(plv),GridDataset(plt_); m=build_model(run,int(plv["feature_dim"]),device)
     def fwd(ds):
         o=[]
         for i in range(0,ds.pf.shape[0],bs): o.append(m(ds.pf[i:i+bs].to(device),ds.mw[i:i+bs].to(device)).cpu())
         return torch.cat(o).numpy()
-    return fwd(dv),dv.y.numpy(),fwd(dt),dt.y.numpy()
+    return fwd(dv),dv.y.numpy(),fwd(dt),dt.y.numpy(),plv,plt_
 
 
 def main():
@@ -49,21 +53,20 @@ def main():
     ap.add_argument("--fuse-classes",nargs="*",default=None,help="restrict color fusion to these a-priori classes (e.g. TonguePale)")
     a=ap.parse_args()
     dev=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    blv,yv,blt,yt=get_logits(a.base_run,a.base_tag,dev)
-    alv,_,alt,_=get_logits(a.add_run,a.add_tag,dev)
+    blv,yv,blt,yt,bv_payload,bt_payload=get_logits(a.base_run,a.base_tag,dev)
+    alv,_,alt,_,av_payload,at_payload=get_logits(a.add_run,a.add_tag,dev)
+    alv=alv[alignment_order(bv_payload,av_payload)]
+    alt=alt[alignment_order(bt_payload,at_payload)]
     sig=lambda x:1/(1+np.exp(-x))
+    selected=select_fusion(blv,alv,yv,a.fuse_classes,margin=a.margin)
+    selected_test=evaluate_selected(blt,alt,yt,selected)
     base_f1=[]; fuse_f1=[]; gammas=[]
     print(f"{'label':>12} {'base':>6} {'fused':>6} {'gamma':>5}")
     for c,l in enumerate(LABELS):
         thb,_=best_thr(yv[:,c],sig(blv[:,c])); bf=_f1(yt[:,c],(sig(blt[:,c])>=thb).astype(int))*100
         # select gamma + threshold on VAL only (require >margin val gain over gamma=0), eval on TEST
-        th0,vf0=best_thr(yv[:,c],sig(blv[:,c]))
-        bg,bvalf1,bth=0.0,vf0,th0
-        allowed = (a.fuse_classes is None) or (l in a.fuse_classes)
-        for g in (GAMMAS[1:] if allowed else []):
-            th,vf=best_thr(yv[:,c],sig(blv[:,c]+g*alv[:,c]))
-            if vf>bvalf1+a.margin/100.0: bvalf1,bg,bth=vf,g,th
-        tf=_f1(yt[:,c],(sig(blt[:,c]+bg*alt[:,c])>=bth).astype(int))*100
+        bg=selected[c]["gamma"]
+        tf=selected_test[c]*100
         base_f1.append(bf); fuse_f1.append(tf); gammas.append(bg)
         print(f"{l:>12} {bf:6.2f} {tf:6.2f} {bg:5.1f}{'  <-color' if bg>0 else ''}")
     print(f"\nMACRO  base={np.mean(base_f1):.2f}  ->  per-class-gated fused={np.mean(fuse_f1):.2f}  "

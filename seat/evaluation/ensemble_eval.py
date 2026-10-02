@@ -16,32 +16,13 @@ from train_readout import GridDataset, grid_path
 from ot_readout_head import AttrReadoutHead
 from ot_sign_head import SignOTHead
 from ot_gen_head import OTGenHead
+from checkpoints import load_trained_model, load_run_payload
+from data_validation import validate_split_payloads
 
 
 def build_model(run, feature_dim, device):
-    s = json.loads((RUNS_DIR / run / "summary.json").read_text())
-    ro = s["readout"]
-    if ro == "otgen":
-        sd = torch.load(RUNS_DIR / run / "best.pt", map_location=device)["model_state"]
-        k = int(sd["protos"].shape[1]); cls_in = sd["cls_w"].shape[1]; pdim = sd["protos"].shape[2]
-        m = OTGenHead(feature_dim, len(LABELS), proj_dim=pdim, ot_k=k,
-                      combine="concat" if cls_in == pdim * k else "mean",
-                      per_class_lam=(sd["lam_logit"].numel() > 1)).to(device)
-    elif ro == "signot":
-        cfg = s["signot"]
-        m = SignOTHead(feature_dim, len(LABELS), proj_dim=cfg.get("proj_dim", 256),
-                       branch=cfg.get("branch", "both"), evidence=cfg.get("evidence", "ot"),
-                       ot_k=cfg.get("ot_k", 4), use_mask_mass=cfg.get("use_mask_mass", False),
-                       beta_init=cfg.get("beta_init", 0.1), beta_per_class=cfg.get("beta_per_class", True),
-                       ot_demand=cfg.get("ot_demand", "attention"), ot_relax=cfg.get("ot_relax", "unbalanced"),
-                       uot_rho=cfg.get("uot_rho", 0.1), partial_m=cfg.get("partial_m", 0.7),
-                       partial_tau=cfg.get("partial_tau", 0.5), mass_gate=cfg.get("mass_gate", True)).to(device)
-    else:  # softmax | ot | mpsa | uot
-        m = AttrReadoutHead(feature_dim, len(LABELS), readout=ro,
-                            mask_guided=s.get("mask_guided", True)).to(device)
-    sd = torch.load(RUNS_DIR / run / "best.pt", map_location=device)["model_state"]
-    m.load_state_dict(sd, strict=False); m.eval()
-    return m
+    return load_trained_model(run, device, feature_dim)[0]
+
 
 
 @torch.inference_mode()
@@ -67,19 +48,28 @@ def main():
     ap.add_argument("--baseline", type=float, default=73.45)
     a = ap.parse_args()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    plv = torch.load(grid_path("val", a.tag, FEATURES_DIR), map_location="cpu", weights_only=False)
-    plt_ = torch.load(grid_path("test", a.tag, FEATURES_DIR), map_location="cpu", weights_only=False)
+    plv = load_run_payload(a.runs[0], a.tag, "val")
+    plt_ = load_run_payload(a.runs[0], a.tag, "test")
+    validate_split_payloads({"val": plv, "test": plt_})
     dv, dt = GridDataset(plv), GridDataset(plt_)
     y_v, y_t = dv.y.numpy(), dt.y.numpy()
     fdim = int(plv["feature_dim"])
     w = np.array(a.weights, float) if a.weights else np.ones(len(a.runs))
+    if len(w) != len(a.runs) or not np.isfinite(w).all() or (w < 0).any() or w.sum() <= 0:
+        raise ValueError("Provide one finite nonnegative weight per run, with a positive sum")
     w = w / w.sum()
 
     pv_each, pt_each = [], []
     print(f"baseline to beat = {a.baseline:.2f}\n{'run':28} {'w':>5} {'solo macroF1':>12} {'Pale':>6} {'Ecchy':>6}")
     for run, wi in zip(a.runs, w):
-        m = build_model(run, fdim, device)
-        pv, pt = probs(m, dv.pf, dv.mw, device), probs(m, dt.pf, dt.mw, device)
+        from data_validation import alignment_order
+        rv = load_run_payload(run, a.tag, "val")
+        rt = load_run_payload(run, a.tag, "test")
+        validate_split_payloads({"val": rv, "test": rt})
+        ov, ot = alignment_order(plv, rv), alignment_order(plt_, rt)
+        m = build_model(run, int(rv["feature_dim"]), device)
+        pv = probs(m, rv["patch_features"][ov].float(), rv["mask_weights"][ov].float(), device)
+        pt = probs(m, rt["patch_features"][ot].float(), rt["mask_weights"][ot].float(), device)
         pv_each.append(pv); pt_each.append(pt)
         mf, perc = evalp(pv, y_v, pt, y_t)
         print(f"{run:28} {wi:5.2f} {mf:12.2f} {perc['TonguePale']:6.1f} {perc['Ecchymosis']:6.1f}")

@@ -12,12 +12,20 @@ from torch import nn
 from torchvision import models
 from PIL import Image
 
-CKPT = Path("/root/autodl-tmp/TongueDx2_Qwen3VL4B_maskpool_cls/artifacts/runs/resnet34_pseudo_seed42/best.pt")
-ROOT = Path("/root/autodl-tmp/TongueDx2_pseudo_v1_qwen3vl4b_sam2")
-MAN = Path("/root/autodl-tmp/TongueDx2_Qwen3VL4B_maskpool_cls/artifacts/manifests/test.jsonl")
+from settings import RESNET_CHECKPOINT, DATASET_ROOT, MANIFEST_DIR
+CKPT = RESNET_CHECKPOINT
+ROOT = DATASET_ROOT
+MAN = MANIFEST_DIR / "test.jsonl"
 IMEAN = np.array([0.485, 0.456, 0.406], np.float32); ISTD = np.array([0.229, 0.224, 0.225], np.float32)
 S = 518
-_man = {json.loads(l)["id"]: json.loads(l) for l in open(MAN)}
+_man = None
+
+def get_manifest():
+    global _man
+    if _man is None:
+        with MAN.open(encoding="utf-8") as f:
+            _man = {r["id"]: r for r in (json.loads(line) for line in f if line.strip())}
+    return _man
 
 
 def _build():
@@ -36,7 +44,7 @@ def gradcam(iid: str, cls: int, dev="cpu"):
     global _MODEL
     if _MODEL is None:
         _MODEL = _build().to(dev)
-    row = _man[iid]
+    row = get_manifest()[iid]
     img = Image.open(ROOT / row["image_path"]).convert("RGB")
     W, H = img.size
     x1, y1, x2, y2 = [int(round(v)) for v in row["sam2_bbox_px"]]
@@ -69,7 +77,11 @@ def gradcam(iid: str, cls: int, dev="cpu"):
 
 
 if __name__ == "__main__":
-    import sys
-    iid, cls = sys.argv[1], int(sys.argv[2])
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("sample_id")
+    parser.add_argument("class_index", type=int, choices=range(8))
+    args = parser.parse_args()
+    iid, cls = args.sample_id, args.class_index
     c = gradcam(iid, cls)
     print("cam", c.shape, "max", c.max(), "coverage", float((c > 0.5).mean()))

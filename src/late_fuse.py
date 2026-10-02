@@ -10,6 +10,9 @@ import torch
 from common import FEATURES_DIR, RUNS_DIR, LABELS
 from train_readout import GridDataset, grid_path
 from ensemble_eval import build_model
+from checkpoints import load_run_payload
+from data_validation import alignment_order, validate_split_payloads
+from fusion import select_fusion, evaluate_selected
 
 
 def _binary_f1(y, pred):
@@ -28,8 +31,9 @@ def best_thr(y,p,step=0.01):
 
 @torch.inference_mode()
 def logits(run, tag, device, bs=128):
-    plv=torch.load(grid_path("val",tag,FEATURES_DIR),map_location="cpu",weights_only=False)
-    plt_=torch.load(grid_path("test",tag,FEATURES_DIR),map_location="cpu",weights_only=False)
+    plv=load_run_payload(run,tag,"val")
+    plt_=load_run_payload(run,tag,"test")
+    validate_split_payloads({"val": plv, "test": plt_})
     dv,dt=GridDataset(plv),GridDataset(plt_); fdim=int(plv["feature_dim"])
     m=build_model(run,fdim,device)
     def fwd(ds):
@@ -37,7 +41,7 @@ def logits(run, tag, device, bs=128):
         for i in range(0,ds.pf.shape[0],bs):
             out.append(m(ds.pf[i:i+bs].to(device),ds.mw[i:i+bs].to(device)).cpu())
         return torch.cat(out).numpy()
-    return fwd(dv),dv.y.numpy(),fwd(dt),dt.y.numpy()
+    return fwd(dv),dv.y.numpy(),fwd(dt),dt.y.numpy(),plv,plt_
 
 
 def main():
@@ -48,20 +52,19 @@ def main():
     a=ap.parse_args()
     dev=torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     ci=LABELS.index(a.cls)
-    blv,yv,blt,yt=logits(a.base_run,a.base_tag,dev)
-    alv,_,alt,_=logits(a.add_run,a.add_tag,dev)
+    blv,yv,blt,yt,bv_payload,bt_payload=logits(a.base_run,a.base_tag,dev)
+    alv,_,alt,_,av_payload,at_payload=logits(a.add_run,a.add_tag,dev)
+    alv=alv[alignment_order(bv_payload,av_payload)]
+    alt=alt[alignment_order(bt_payload,at_payload)]
     bv,bt_=blv[:,ci],blt[:,ci]; av,at=alv[:,ci],alt[:,ci]; yvc,ytc=yv[:,ci],yt[:,ci]
     # baseline alone
     th,_=best_thr(yvc, 1/(1+np.exp(-bv))); base_f1=_binary_f1(ytc,(1/(1+np.exp(-bt_))>=th).astype(int))*100
     print(f"class={a.cls}  base({a.base_run}) F1={base_f1:.2f}")
-    print(f"{'gamma':>6} {'test F1':>8}")
-    best=(0.0,base_f1)
-    for g in [-1,-0.5,-0.2,0,0.2,0.5,1,2]:
-        fv=1/(1+np.exp(-(bv+g*av))); ft=1/(1+np.exp(-(bt_+g*at)))
-        th,_=best_thr(yvc,fv); f1=_binary_f1(ytc,(ft>=th).astype(int))*100
-        print(f"{g:>6.1f} {f1:>8.2f}{'  <-best' if f1>best[1] else ''}")
-        if f1>best[1]: best=(g,f1)
-    print(f"\nbest gamma={best[0]} -> {a.cls} F1={best[1]:.2f}  (base {base_f1:.2f}; {'+%.2f LIFT'%(best[1]-base_f1) if best[1]>base_f1 else 'no lift'})")
+    selected=select_fusion(blv,alv,yv,[a.cls],gammas=(-1,-0.5,-0.2,0,0.2,0.5,1,2))
+    cfg=selected[ci]
+    score=evaluate_selected(blt,alt,yt,selected)[ci]*100
+    print(f"Validation-selected gamma={cfg['gamma']} threshold={cfg['threshold']:.4f}")
+    print(f"Held-out {a.cls} F1={score:.2f} (base {base_f1:.2f})")
 
 
 if __name__=="__main__":

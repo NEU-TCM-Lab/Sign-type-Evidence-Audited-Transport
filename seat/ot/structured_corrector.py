@@ -1,110 +1,80 @@
-from __future__ import annotations
-# Give co-occurrence its STRONGEST shot: a learned structured corrector (mini-CRF / C-Tran-style
-# label message-passing) over the generative model's 8 calibrated per-sign probs. Learns ARBITRARY
-# pairwise label dependencies (incl. NEGATIVE / conditional) that fixed-Jaccard rescoring missed.
-#   logit_out_i = a_i * logit(p_i) + b_i + sum_j W_ij * (p_j - 0.5)
-# Fit on val (BCE + weight decay), tune per-class thresholds on val, eval test.
-# Compare: independent baseline vs Jaccard-init vs learned-from-scratch. If learned ALSO fails to
-# beat independent -> airtight proof label dependencies are exhausted (not a crude-method artifact).
-
+"""Fit a corrector on training predictions; select using validation only."""
 import argparse
 import numpy as np
 import torch
 from torch import nn
 from sklearn.metrics import f1_score
-
-LABELS = ["TonguePale", "TipSideRed", "Spot", "Ecchymosis", "Crack", "Toothmark", "FurThick", "FurYellow"]
-
-
-def logit(p, eps=1e-4):
-    p = np.clip(p, eps, 1 - eps)
-    return np.log(p / (1 - p))
+from settings import LABELS
+from data_validation import validate_split_payloads
 
 
 class Corrector(nn.Module):
-    def __init__(self, W_init=None, no_offdiag=False):
+    def __init__(self, W_init=None):
         super().__init__()
-        self.a = nn.Parameter(torch.ones(8))
-        self.b = nn.Parameter(torch.zeros(8))
-        W0 = torch.zeros(8, 8) if W_init is None else torch.tensor(W_init, dtype=torch.float32)
-        self.W = nn.Parameter(W0)
-        self.no_offdiag = no_offdiag
+        self.a = nn.Parameter(torch.ones(len(LABELS)))
+        self.b = nn.Parameter(torch.zeros(len(LABELS)))
+        self.W = nn.Parameter(torch.zeros(len(LABELS), len(LABELS)) if W_init is None else torch.tensor(W_init, dtype=torch.float32))
 
-    def forward(self, P):                       # P: [N,8] probs
-        Lg = torch.log(P.clamp(1e-4, 1 - 1e-4) / (1 - P).clamp(1e-4, 1 - 1e-4))
-        msg = (P - 0.5) @ self.W.t()
-        if self.no_offdiag:
-            msg = msg * 0
-        return self.a * Lg + self.b + msg       # output logits
+    def forward(self, probs):
+        p = probs.clamp(1e-4, 1 - 1e-4)
+        return self.a * torch.log(p / (1 - p)) + self.b + (p - 0.5) @ self.W.t()
 
 
-def tune_thr(Y, prob):
-    thr = np.zeros(8)
-    for i in range(8):
-        best, bt = -1, 0.5
-        for t in np.linspace(0.05, 0.95, 91):
-            f = f1_score(Y[:, i], (prob[:, i] >= t).astype(int), zero_division=0)
-            if f > best: best, bt = f, t
-        thr[i] = bt
-    return thr
+def tune_thr(labels, probs):
+    from fusion import best_threshold
+    return np.array([best_threshold(labels[:, c], probs[:, c])[0] for c in range(len(LABELS))])
 
 
-def macro(Y, prob, thr):
-    return float(np.mean([f1_score(Y[:, i], (prob[:, i] >= thr[i]).astype(int), zero_division=0) for i in range(8)]))
+def macro(labels, probs, thresholds):
+    return float(np.mean([f1_score(labels[:, c], probs[:, c] >= thresholds[c], zero_division=0) for c in range(len(LABELS))]))
 
 
-def fit_eval(Pv, Yv, Pt, Yt, W_init, wd, no_off=False, epochs=400):
-    m = Corrector(W_init=W_init, no_offdiag=no_off)
-    opt = torch.optim.Adam(m.parameters(), lr=0.05, weight_decay=wd)
-    lossf = nn.BCEWithLogitsLoss()
-    Pvt, Yvt = torch.tensor(Pv, dtype=torch.float32), torch.tensor(Yv, dtype=torch.float32)
-    for _ in range(epochs):
-        opt.zero_grad(); loss = lossf(m(Pvt), Yvt); loss.backward(); opt.step()
-    with torch.no_grad():
-        pv = torch.sigmoid(m(Pvt)).numpy()
-        pt = torch.sigmoid(m(torch.tensor(Pt, dtype=torch.float32))).numpy()
-    thr = tune_thr(Yv, pv)
-    return macro(Yt, pt, thr), pt, thr, m
+def select_corrector(train_probs, train_labels, val_probs, val_labels, epochs=400, seed=42):
+    y = np.asarray(train_labels, dtype=float)
+    intersection = y.T @ y
+    union = y.sum(0)[:, None] + y.sum(0)[None, :] - intersection
+    coocc = intersection / np.maximum(union, 1)
+    thresholds = tune_thr(val_labels, val_probs)
+    best = {"name": "independent", "val_f1": macro(val_labels, val_probs, thresholds), "thresholds": thresholds, "model": None}
+    candidates = [("learned_scratch", None, 1e-3), ("learned_jaccard_init", coocc, 1e-3), ("learned_strong_reg", None, 1e-2), ("learned_weak_reg", None, 1e-4)]
+    for name, initial, decay in candidates:
+        torch.manual_seed(seed)
+        model = Corrector(initial)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.05, weight_decay=decay)
+        x = torch.tensor(train_probs, dtype=torch.float32)
+        target = torch.tensor(train_labels, dtype=torch.float32)
+        for _ in range(epochs):
+            optimizer.zero_grad()
+            loss = nn.functional.binary_cross_entropy_with_logits(model(x), target)
+            loss.backward(); optimizer.step()
+        model.eval()
+        with torch.no_grad(): probs = torch.sigmoid(model(torch.tensor(val_probs, dtype=torch.float32))).numpy()
+        thresholds = tune_thr(val_labels, probs)
+        score = macro(val_labels, probs, thresholds)
+        if score > best["val_f1"]:
+            best = {"name": name, "val_f1": score, "thresholds": thresholds, "model": model}
+    return best
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--npz", required=True)
-    args = ap.parse_args()
-    d = np.load(args.npz)
-    Pv, Yv, Pt, Yt, C = d["Pv"], d["Yv"], d["Pt"], d["Yt"], d["C"]
-
-    # independent baseline (no structure)
-    thr0 = tune_thr(Yv, Pv)
-    base = macro(Yt, Pt, thr0)
-
-    results = {"independent": base}
-    cands = [("learned_scratch", None, 1e-3, False),
-             ("learned_jaccard_init", C, 1e-3, False),
-             ("learned_strong_reg", None, 1e-2, False),
-             ("learned_weak_reg", None, 1e-4, False)]
-    best = ("independent", base, None, thr0)
-    for name, Wi, wd, no in cands:
-        mac, pt, thr, model = fit_eval(Pv, Yv, Pt, Yt, Wi, wd, no)
-        results[name] = mac
-        if mac > best[1]:
-            best = (name, mac, model, thr)
-
-    print("=== structured corrector (test MacroF1) ===")
-    for k, v in results.items():
-        print(f"  {k:24s}: {v*100:.2f}")
-    print(f"BEST: {best[0]} = {best[1]*100:.2f}  (independent baseline {base*100:.2f}, Δ={ (best[1]-base)*100:+.2f})")
-    # per-class of best
-    if best[2] is not None:
-        with torch.no_grad():
-            pt = torch.sigmoid(best[2](torch.tensor(Pt, dtype=torch.float32))).numpy()
-        pc = {LABELS[i]: round(f1_score(Yt[:, i], (pt[:, i] >= best[3][i]).astype(int), zero_division=0) * 100, 2) for i in range(8)}
-        print("per-class (best):", pc)
-        W = best[2].W.detach().numpy()
-        print("learned W (label->label, neg=anti-corr):")
-        for i in range(8):
-            row = " ".join(f"{W[i,j]:+.2f}" for j in range(8))
-            print(f"  {LABELS[i]:11s} {row}")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--npz", required=True, help="Ptr/Ytr/Pv/Yv/Pt/Yt, train/val/test_ids and label_order")
+    parser.add_argument("--epochs", type=int, default=400)
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
+    with np.load(args.npz, allow_pickle=False) as archive: d = dict(archive)
+    needed = {"Ptr", "Ytr", "Pv", "Yv", "Pt", "Yt", "train_ids", "val_ids", "test_ids", "label_order"}
+    if needed - d.keys(): raise ValueError(f"Training predictions and split identities are required: {sorted(needed - d.keys())}")
+    validate_split_payloads({s: {"split": s, "ids": d[f"{s}_ids"], "labels": d[key], "label_order": d["label_order"]} for s, key in (("train", "Ytr"), ("val", "Yv"), ("test", "Yt"))})
+    for probs, labels in (("Ptr", "Ytr"), ("Pv", "Yv"), ("Pt", "Yt")):
+        if d[probs].shape != d[labels].shape or not np.isfinite(d[probs]).all() or ((d[probs] < 0) | (d[probs] > 1)).any():
+            raise ValueError("Expected finite probability arrays with matching label shapes")
+    best = select_corrector(d["Ptr"], d["Ytr"], d["Pv"], d["Yv"], args.epochs, args.seed)
+    test_probs = d["Pt"]
+    if best["model"] is not None:
+        with torch.no_grad(): test_probs = torch.sigmoid(best["model"](torch.tensor(test_probs, dtype=torch.float32))).numpy()
+    print(f"Validation-selected corrector: {best['name']} (val F1={best['val_f1']:.4f})")
+    print(f"Held-out test macro-F1: {macro(d['Yt'], test_probs, best['thresholds']):.4f}")
 
 
 if __name__ == "__main__":

@@ -12,3 +12,12 @@ features/
 checkpoints/
 data/
 datasets/
+artifacts/
+outputs/
+models/
+.env
+.env.*
+*.jsonl
+predictions*.csv
+prediction*.csv
+.pytest_cache/

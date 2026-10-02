@@ -50,7 +50,7 @@ def main():
         drop_r = float((base[pos] - pale_logit(m, pf_r, mw, dev)[pos]).mean())
         res["clinical"].append(drop_c); res["random"].append(drop_r)
         print(f"{d:>6.2f} {drop_c:>18.3f} {drop_r:>17.3f}")
-    auc = {n: float(np.trapz(v, a.deltas) / (a.deltas[-1] - a.deltas[0])) for n, v in res.items()}
+    auc = {n: float(np.trapezoid(v, a.deltas) / (a.deltas[-1] - a.deltas[0])) for n, v in res.items()}
     print(f"\ncounterfactual-AUC  clinical={auc['clinical']:.3f}  random={auc['random']:.3f}  "
           f"ratio={auc['clinical']/max(abs(auc['random']),1e-6):.1f}x")
     print(f"VERDICT: pale decision is {'FAITHFULLY grounded in the clinical color axis' if auc['clinical']>2*abs(auc['random']) and auc['clinical']>0 else 'not clearly color-grounded'}")

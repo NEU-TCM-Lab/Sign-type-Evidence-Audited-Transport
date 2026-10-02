@@ -15,23 +15,15 @@ import torch
 from common import FEATURES_DIR, RUNS_DIR, LABELS
 from train_readout import GridDataset, grid_path
 from ot_sign_head import SignOTHead
+from checkpoints import load_trained_model, load_run_payload
 
 
 def load_model(run, feature_dim, device):
-    s = json.loads((RUNS_DIR / run / "summary.json").read_text())
-    cfg = s.get("signot") or {}
-    m = SignOTHead(feature_dim=feature_dim, num_labels=len(LABELS),
-                   proj_dim=cfg.get("proj_dim", 256), branch=cfg.get("branch", "both"),
-                   evidence=cfg.get("evidence", "ot"), ot_k=cfg.get("ot_k", 4),
-                   use_mask_mass=cfg.get("use_mask_mass", False),
-                   beta_init=cfg.get("beta_init", 0.1),
-                   beta_per_class=cfg.get("beta_per_class", True),
-                   ot_demand=cfg.get("ot_demand", "attention"), ot_relax=cfg.get("ot_relax", "unbalanced"),
-                   uot_rho=cfg.get("uot_rho", 0.1), partial_m=cfg.get("partial_m", 0.7),
-                   partial_tau=cfg.get("partial_tau", 0.5), mass_gate=cfg.get("mass_gate", True)).to(device)
-    sd = torch.load(RUNS_DIR / run / "best.pt", map_location=device)["model_state"]
-    m.load_state_dict(sd, strict=False); m.eval()
-    return m, cfg
+    model, config = load_trained_model(run, device, feature_dim)
+    if config["readout"] != "signot":
+        raise ValueError("This explanation requires a signot checkpoint")
+    return model, config["kwargs"]
+
 
 
 @torch.inference_mode()
@@ -87,7 +79,7 @@ def main():
     ap.add_argument("--out-dir", default=None)
     a = ap.parse_args()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    pl = torch.load(grid_path(a.split, a.tag, FEATURES_DIR), map_location="cpu", weights_only=False)
+    pl = load_run_payload(a.run, a.tag, a.split)
     ds = GridDataset(pl)
     pf, mw, y = ds.pf, ds.mw, ds.y
     feature_dim = int(pl["feature_dim"])
@@ -114,7 +106,7 @@ def main():
     for s in ["random", "attention", "OT"]:
         if any(res[s][k] for k in ks):
             means = [float(np.mean(res[s][k])) if res[s][k] else float("nan") for k in ks]
-            auc = float(np.trapz(means, ks) / (ks[-1] - ks[0]))
+            auc = float(np.trapezoid(means, ks) / (ks[-1] - ks[0]))
             summary[s] = {"per_k": dict(zip(map(str, ks), means)), "auc": auc}
             print(f"{s:10} " + "  ".join(f"{v:5.3f}" for v in means) + f"   {auc:6.3f}")
     verdict = ("OT" in summary and "attention" in summary and "random" in summary

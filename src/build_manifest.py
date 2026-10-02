@@ -5,6 +5,8 @@ from pathlib import Path
 
 from PIL import Image
 from tqdm import tqdm
+import hashlib
+from data_validation import relative_dataset_path, audit_manifest_splits
 
 from common import (
     ARTIFACTS_DIR,
@@ -31,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--label-root", type=Path, default=LABEL_ROOT)
     parser.add_argument("--manifest-dir", type=Path, default=MANIFEST_DIR)
     parser.add_argument("--splits", nargs="+", default=["train", "val", "test"], choices=list(SPLIT_CSV))
+    parser.add_argument("--group-field", help="Patient/subject field in annotations or label CSV")
+    parser.add_argument("--hash-images", action="store_true")
     parser.add_argument("--limit", type=int, default=None, help="Optional debug limit after validation.")
     return parser.parse_args()
 
@@ -101,8 +105,8 @@ def build_split(args: argparse.Namespace, split: str) -> dict:
         original_relative_path = str(ann["original_relative_path"])
         label_row = labels_by_path[original_relative_path]
 
-        image_rel = Path(ann["image_path"])
-        mask_rel = Path(ann["pseudo_mask_path"])
+        image_rel = relative_dataset_path(ann["image_path"])
+        mask_rel = relative_dataset_path(ann["pseudo_mask_path"])
         image_path = args.dataset_root / image_rel
         mask_path = args.dataset_root / mask_rel
         if not image_path.is_file():
@@ -119,10 +123,12 @@ def build_split(args: argparse.Namespace, split: str) -> dict:
                 f"Mask/image size mismatch for {original_relative_path}: image={(image_width, image_height)}, mask={(mask_width, mask_height)}"
             )
 
+        for path in (image_path, mask_path):
+            if not path.resolve().is_relative_to(args.dataset_root.resolve()):
+                raise ValueError("Dataset symlink escapes the dataset root")
         bbox = ann["sam2_bbox_px"]
         labels = label_vector(label_row, original_relative_path)
-        out_rows.append(
-            {
+        row = {
                 "id": str(ann["id"]),
                 "split": split,
                 "original_relative_path": original_relative_path,
@@ -140,7 +146,15 @@ def build_split(args: argparse.Namespace, split: str) -> dict:
                 "sam2_score": ann.get("sam2_score"),
                 "mask_area": ann.get("mask_area"),
             }
-        )
+        if args.group_field:
+            group = ann.get(args.group_field, label_row.get(args.group_field))
+            if group is None or not str(group).strip():
+                raise ValueError("Patient/group field missing from an annotation")
+            row["group_id"] = str(group)
+        if args.hash_images:
+            with image_path.open("rb") as f:
+                row["image_sha256"] = hashlib.file_digest(f, "sha256").hexdigest()
+        out_rows.append(row)
 
     out_path = split_manifest_path(split, args.manifest_dir)
     write_jsonl(out_path, out_rows)
@@ -155,6 +169,11 @@ def main() -> None:
     args.manifest_dir.mkdir(parents=True, exist_ok=True)
     write_json(label_order_path(ARTIFACTS_DIR), LABELS)
     summaries = [build_split(args, split) for split in args.splits]
+    from common import read_jsonl
+    available = {s: read_jsonl(split_manifest_path(s, args.manifest_dir)) for s in SPLIT_CSV
+                 if split_manifest_path(s, args.manifest_dir).is_file()}
+    audit = audit_manifest_splits(available)
+    write_json(args.manifest_dir / "split_audit.json", audit)
     write_json(args.manifest_dir / "summary.json", {"label_order": LABELS, "splits": summaries})
     print(f"Wrote manifests to {args.manifest_dir}")
 

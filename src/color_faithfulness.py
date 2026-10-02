@@ -12,19 +12,17 @@ import torch
 from common import FEATURES_DIR, RUNS_DIR, LABELS
 from train_readout import GridDataset, grid_path
 from ot_gen_head import OTGenHead
+from checkpoints import load_trained_model
 
 PALE = LABELS.index("TonguePale")
 
 
 def load_color(run, device):
-    sd = torch.load(RUNS_DIR / run / "best.pt", map_location=device)["model_state"]
-    k = int(sd["protos"].shape[1]); pdim = int(sd["protos"].shape[2])
-    combine = "concat" if sd["cls_w"].shape[1] == pdim * k else "mean"
-    m = OTGenHead(feature_dim=int(sd["proj.weight"].shape[1]), num_labels=len(LABELS), proj_dim=pdim,
-                  ot_k=k, combine=combine, per_class_lam=(sd["lam_logit"].numel() > 1),
-                  peak_topk=16 if "peak_gain" in sd else 0).to(device)
-    m.load_state_dict(sd, strict=True); m.eval()
-    return m
+    model, config = load_trained_model(run, device)
+    if config["readout"] != "otgen":
+        raise ValueError("Color faithfulness requires an otgen checkpoint")
+    return model
+
 
 
 @torch.inference_mode()
@@ -68,7 +66,7 @@ def main():
             masked = pale_logit(m, pf, mw2, dev)
             res[name].append(float((base[pos] - masked[pos]).mean()))
         print(f"{k:>4} {res['color-OT'][-1]:>15.3f} {res['random'][-1]:>13.3f}")
-    auc = {n: float(np.trapz(v, a.ks) / (a.ks[-1] - a.ks[0])) for n, v in res.items()}
+    auc = {n: float(np.trapezoid(v, a.ks) / (a.ks[-1] - a.ks[0])) for n, v in res.items()}
     print(f"\ndeletion-AUC  color-OT={auc['color-OT']:.3f}  random={auc['random']:.3f}  "
           f"ratio={auc['color-OT']/max(auc['random'],1e-6):.1f}x")
     print(f"VERDICT: color evidence is {'LOAD-BEARING / faithful' if auc['color-OT']>3*max(auc['random'],1e-3) else 'weakly faithful'}")

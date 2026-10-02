@@ -16,15 +16,17 @@ import cv2
 from PIL import Image
 import torch
 
-from common import DATASET_ROOT, FEATURES_DIR, LABELS, read_jsonl, split_manifest_path
+from common import DATASET_ROOT, FEATURES_DIR, MANIFEST_DIR, LABELS, read_jsonl, split_manifest_path
+from geometry import resize_image
+from data_validation import identity_metadata
 from cache_backbone_features import mask_grid_weights
 
 SIZE, PATCH, GRID = 518, 14, 37
 
 
-def tex_grid(ipath: Path, mpath: Path) -> np.ndarray:
+def tex_grid(ipath: Path, mpath: Path, geometry: str = "square") -> tuple[np.ndarray, torch.Tensor]:
     with Image.open(ipath) as img:
-        rgb = np.asarray(img.convert("RGB").resize((SIZE, SIZE), Image.Resampling.BILINEAR), dtype=np.uint8)
+        rgb = np.asarray(resize_image(img.convert("RGB"), SIZE, geometry), dtype=np.uint8)
     lab = cv2.cvtColor(rgb, cv2.COLOR_RGB2LAB).astype(np.float32)
     L = lab[..., 0] / 255.0; a = (lab[..., 1] - 128) / 128.0; b = (lab[..., 2] - 128) / 128.0
     lab_n = np.stack([L, a, b], -1)                                          # [S,S,3]
@@ -33,7 +35,7 @@ def tex_grid(ipath: Path, mpath: Path) -> np.ndarray:
               - lab_n[..., 0].reshape(GRID, PATCH, GRID, PATCH).min((1, 3)))  # [37,37] within-patch L range
 
     # mask-weighted tongue mean -> color deviation
-    w, _s, _fb = mask_grid_weights(mpath, SIZE, PATCH, GRID)
+    w, _s, _fb = mask_grid_weights(mpath, SIZE, PATCH, GRID, geometry)
     wv = w.numpy().reshape(GRID, GRID, 1).clip(0, 1)
     tongue_mean = (pm * wv).sum((0, 1)) / max(wv.sum(), 1e-6)                # [3]
     dev = pm - tongue_mean[None, None, :]                                    # [37,37,3]
@@ -59,16 +61,27 @@ def tex_grid(ipath: Path, mpath: Path) -> np.ndarray:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--splits", nargs="+", default=["val", "test", "train"])
+    ap.add_argument("--dataset-root", type=Path, default=DATASET_ROOT)
+    ap.add_argument("--manifest-dir", type=Path, default=MANIFEST_DIR)
+    ap.add_argument("--features-dir", type=Path, default=FEATURES_DIR)
+    ap.add_argument("--geometry", choices=["square", "arpad"], default="square")
+    ap.add_argument("--overwrite", action="store_true")
+    ap.add_argument("--splits", nargs="+", choices=["train", "val", "test"], default=["val", "test", "train"])
     ap.add_argument("--tag", default="tex_seed42")
     a = ap.parse_args()
-    mdir = Path("/root/autodl-tmp/TongueDx2_Qwen3VL4B_maskpool_cls/artifacts/manifests")
+    mdir = a.manifest_dir
+    a.features_dir.mkdir(parents=True, exist_ok=True)
     for split in a.splits:
+        out = a.features_dir / f"{split}_patchgrid_{a.tag}.pt"
+        if out.exists() and not a.overwrite:
+            raise FileExistsError(f"{out} exists; pass --overwrite")
         rows = read_jsonl(split_manifest_path(split, mdir))
         t0 = time.perf_counter()
         feats, masks, labels, ids = [], [], [], []
+        fallback_count = 0
         for i, row in enumerate(rows):
-            f, w = tex_grid(DATASET_ROOT / row["image_path"], DATASET_ROOT / row["mask_path"])
+            f, w = tex_grid(a.dataset_root / row["image_path"], a.dataset_root / row["mask_path"], a.geometry)
+            fallback_count += int(float(w.sum()) <= 0)
             feats.append(torch.from_numpy(f)); masks.append(w.to(torch.float16))
             labels.append(torch.tensor(row["labels"], dtype=torch.float32)); ids.append(row["id"])
             if (i + 1) % 500 == 0:
@@ -79,7 +92,9 @@ def main():
                    "patch_features": pf, "mask_weights": torch.stack(masks),
                    "labels": torch.stack(labels), "ids": ids, "mask_fallback_count": 0,
                    "bbox_norm": torch.zeros(len(ids), 9)}
-        out = FEATURES_DIR / f"{split}_patchgrid_{a.tag}.pt"
+        payload.update(identity_metadata(rows))
+        payload["geometry"] = a.geometry
+        payload["mask_fallback_count"] = fallback_count
         torch.save(payload, out)
         print(f"[{split}] {len(ids)} -> {out} ({time.perf_counter()-t0:.0f}s) feat={tuple(pf.shape)}", flush=True)
 

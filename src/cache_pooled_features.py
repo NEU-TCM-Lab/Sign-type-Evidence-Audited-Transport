@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from PIL import Image
 from tqdm import tqdm
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
+from data_validation import identity_metadata
 
 from common import (
     DATASET_ROOT,
@@ -464,6 +465,7 @@ def extract_split(args: argparse.Namespace, split: str, model, processor, device
     full_rows = select_rows(args, split, patch_size, merge_size)
     full_selected_ids = [row["id"] for row in full_rows]
     rows = full_rows[args.shard_index :: args.num_shards]
+    identity_by_id = {row["id"]: row for row in rows}
     selected_ids = [row["id"] for row in rows]
     acc, already_complete = load_resume_accumulator(args, split, out_path, selected_ids, patch_size, merge_size, max_pixels)
     acc["selected_ids"] = selected_ids
@@ -508,6 +510,7 @@ def extract_split(args: argparse.Namespace, split: str, model, processor, device
     if len(set(acc["ids"])) != len(acc["ids"]):
         raise AssertionError(f"{split} cache has duplicate ids")
     payload = finalize_payload(acc)
+    payload.update(identity_metadata([identity_by_id[sample_id] for sample_id in payload["ids"]]))
     summary = make_summary(payload, out_path, len(rows), partial=False, elapsed_sec=time.perf_counter() - start_time)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_path)

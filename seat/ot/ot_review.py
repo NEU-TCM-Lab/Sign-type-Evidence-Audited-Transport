@@ -18,6 +18,7 @@ from common import FEATURES_DIR, RUNS_DIR, LABELS
 from metrics import find_best_thresholds, compute_metrics
 from train_readout import GridDataset, grid_path
 from ot_explain import load_model
+from checkpoints import load_run_payload
 
 ALPHAS = [-1.0, -0.5, 0.0, 0.1, 0.2, 0.5, 1.0]
 
@@ -89,8 +90,8 @@ def main():
     a = ap.parse_args()
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    plv = torch.load(grid_path("val", a.tag, FEATURES_DIR), map_location="cpu", weights_only=False)
-    plt_ = torch.load(grid_path("test", a.tag, FEATURES_DIR), map_location="cpu", weights_only=False)
+    plv = load_run_payload(a.run, a.tag, "val")
+    plt_ = load_run_payload(a.run, a.tag, "test")
     dv, dt = GridDataset(plv), GridDataset(plt_)
     feature_dim = int(plv["feature_dim"])
     m, cfg = load_model(a.run, feature_dim, device)
@@ -103,7 +104,7 @@ def main():
     y_v, y_t = dv.y.numpy(), dt.y.numpy()
 
     # ---------- Review 1: post-hoc fusion oracle ----------
-    print(f"\n=== [1] POST-HOC FUSION ORACLE  final = global + alpha*OT  (VAL-calibrated -> TEST macro-F1) ===")
+    print(f"\n=== [1] VALIDATION-SELECTED POST-HOC FUSION  final = global + alpha*OT  (VAL-calibrated -> TEST macro-F1) ===")
     print(f"baseline (global-only DINOv2) = {a.baseline:.2f}")
     print(f"{'alpha':>6} | {'test macroF1':>12} | {'vs baseline':>11}")
     macro_by_alpha = {}; perc_by_alpha = {}
@@ -112,7 +113,9 @@ def main():
         macro_by_alpha[al] = mf; perc_by_alpha[al] = perc
         tag = "  <- alpha=0 (global only of this run)" if al == 0 else ""
         print(f"{al:>6.2f} | {mf:>12.2f} | {mf-a.baseline:>+11.2f}{tag}")
-    best_al = max(macro_by_alpha, key=macro_by_alpha.get)
+    val_macro_by_alpha = {al: float(np.mean([best_thr_f1(y_v[:, li], sig(gl_v + al*ol_v)[:, li])[1]
+                              for li in range(len(LABELS))])) for al in ALPHAS}
+    best_al = max(val_macro_by_alpha, key=val_macro_by_alpha.get)
     beat = macro_by_alpha[best_al] > a.baseline
     print(f"best alpha={best_al} -> {macro_by_alpha[best_al]:.2f}  "
           f"{'BEATS' if beat else 'does NOT beat'} baseline {a.baseline:.2f}  "
@@ -162,7 +165,7 @@ def main():
     else:
         print("OT helps NO class under per-class oracle => STOP the OT classification route.")
 
-    out = {"run": a.run, "review1_macro_by_alpha": macro_by_alpha, "best_alpha": best_al,
+    out = {"run": a.run, "review1_macro_by_alpha": macro_by_alpha, "best_alpha": best_al, "selected_on": "validation",
            "beats_baseline": bool(beat), "review2_similarity_mean": {"cosine": mc, "spearman": ms, "js": mj},
            "review2_per_class": sims, "review3_perclass_gated_oracle_macro": pcg_macro,
            "review3_classes_helped": any_help}

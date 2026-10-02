@@ -5,6 +5,7 @@ import json
 import math
 import os
 import random
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
@@ -13,26 +14,8 @@ import numpy as np
 import torch
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATASET_ROOT = Path("/root/autodl-tmp/TongueDx2_pseudo_v1_qwen3vl4b_sam2")
-LABEL_ROOT = Path("/root/autodl-tmp/TongueDx2/list")
-MODEL_PATH = Path("/root/autodl-tmp/modelscope_cache/Qwen/Qwen3-VL-4B-Instruct")
-
-ARTIFACTS_DIR = PROJECT_ROOT / "artifacts"
-MANIFEST_DIR = ARTIFACTS_DIR / "manifests"
-FEATURES_DIR = ARTIFACTS_DIR / "features"
-RUNS_DIR = ARTIFACTS_DIR / "runs"
-
-LABELS = [
-    "TonguePale",
-    "TipSideRed",
-    "Spot",
-    "Ecchymosis",
-    "Crack",
-    "Toothmark",
-    "FurThick",
-    "FurYellow",
-]
+from settings import (PROJECT_ROOT, DATASET_ROOT, LABEL_ROOT, MODEL_PATH,
+                      ARTIFACTS_DIR, MANIFEST_DIR, FEATURES_DIR, RUNS_DIR, LABELS)
 
 SPLIT_CSV = {
     "train": "train_fold1.csv",
@@ -182,4 +165,4 @@ def load_feature_file(split: str, tag: str | None = None, features_dir: str | Pa
 
 
 def env_python_hint() -> str:
-    return "/root/autodl-tmp/conda/envs/vlm-vllm/bin/python"
+    return sys.executable

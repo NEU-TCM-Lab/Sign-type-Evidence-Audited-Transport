@@ -12,6 +12,7 @@ from tqdm import tqdm
 from common import FEATURES_DIR, LABELS, RUNS_DIR, assert_label_order, load_feature_file, set_seed, timestamp, write_json
 from metrics import compute_metrics, find_best_thresholds, sigmoid_np
 from model import MaskPoolBBoxHead
+from data_validation import validate_split_payloads
 from losses import LogitAdjuster, build_loss, compute_pos_prior, loss_uses_logit_adjustment
 
 
@@ -153,6 +154,11 @@ def main() -> None:
 
     train_payload = load_feature_file("train", tag=args.tag, features_dir=args.features_dir)
     val_payload = load_feature_file("val", tag=args.tag, features_dir=args.features_dir)
+    split_payloads = {"train": train_payload, "val": val_payload}
+    test_path = args.features_dir / ("test_pooled" + (f"_{args.tag}" if args.tag else "") + ".pt")
+    if test_path.exists():
+        split_payloads["test"] = load_feature_file("test", tag=args.tag, features_dir=args.features_dir)
+    validate_split_payloads(split_payloads)
     train_dataset = CachedFeatureDataset(train_payload, limit=args.limit_train)
     val_dataset = CachedFeatureDataset(val_payload, limit=args.limit_val)
     train_loader = make_loader(train_dataset, args.batch_size, shuffle=True, num_workers=args.num_workers)

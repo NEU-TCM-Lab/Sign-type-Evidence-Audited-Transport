@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tag", type=str, default=None)
     parser.add_argument("--splits", nargs="+", default=["val", "test"], choices=["train", "val", "test"])
     parser.add_argument("--batch-size", type=int, default=512)
+    parser.add_argument("--export-predictions", action="store_true", help="Write sample-level private prediction CSVs locally")
     parser.add_argument("--out-dir", type=Path, default=None)
     return parser.parse_args()
 
@@ -67,11 +68,17 @@ def main() -> None:
         dataset = CachedFeatureDataset(payload)
         loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, pin_memory=torch.cuda.is_available())
         logits, y_true, loss = collect_logits(model, loader, device)
+        adjustment = checkpoint.get("logit_adjustment")
+        if adjustment and adjustment.get("eval_apply"):
+            # Match the validation-time scores used to select these thresholds.
+            import numpy as np
+            logits = logits - np.asarray(adjustment["adjustment"])[None, :]
         probs = sigmoid_np(logits)
         metrics = compute_metrics(y_true, probs, thresholds, LABELS)
         metrics["loss"] = loss
         write_json(out_dir / f"metrics_{split}.json", metrics)
-        write_predictions(out_dir / f"predictions_{split}.csv", payload, probs, thresholds)
+        if args.export_predictions:
+            write_predictions(out_dir / f"predictions_{split}.csv", payload, probs, thresholds)
         print(f"{split}: wrote metrics and predictions to {out_dir}")
 
 

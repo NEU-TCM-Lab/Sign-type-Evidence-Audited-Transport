@@ -8,6 +8,7 @@ import numpy as np
 import torch
 
 from cache_pooled_features import shard_feature_path
+from data_validation import identity_metadata
 from common import (
     EXPECTED_COUNTS,
     FEATURES_DIR,
@@ -186,6 +187,7 @@ def main() -> None:
         raise AssertionError(f"Token max {payload['token_stats']['max']} > {args.max_visual_tokens}")
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload.update(identity_metadata(manifest_rows))
     torch.save(payload, out_path)
     write_json(summary_path(out_path), make_summary(payload, out_path, args.num_shards))
     print(f"merged {args.num_shards} shards into {out_path}")

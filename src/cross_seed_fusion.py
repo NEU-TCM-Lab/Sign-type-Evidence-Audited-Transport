@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 
 import numpy as np
+from settings import OUTPUTS_DIR
+from data_validation import alignment_order, validate_split_payloads
+from fusion import validate_prediction_dump
 
 
 LABELS = [
@@ -54,16 +57,16 @@ def best_threshold(y: np.ndarray, prob: np.ndarray, step: float) -> tuple[float,
 
 
 def load_npz(path: Path) -> dict[str, np.ndarray]:
-    data = np.load(path, allow_pickle=True)
-    return {k: data[k] for k in data.files}
+    with np.load(path, allow_pickle=False) as data:
+        dump = {k: data[k] for k in data.files}
+    validate_prediction_dump(dump)
+    return dump
 
 
 def align_like(base: dict[str, np.ndarray], other: dict[str, np.ndarray], split: str) -> np.ndarray:
-    base_ids = [str(x) for x in base[f"{split}_ids"]]
-    other_ids = [str(x) for x in other[f"{split}_ids"]]
-    index = {sample_id: i for i, sample_id in enumerate(other_ids)}
-    order = [index[sample_id] for sample_id in base_ids]
+    order = alignment_order(base, other, id_key=f"{split}_ids", label_key=f"{split}_labels")
     return other[f"{split}_logits"][order]
+
 
 
 def aggregate(logits: list[np.ndarray], mode: str) -> np.ndarray:
@@ -79,7 +82,7 @@ def aggregate(logits: list[np.ndarray], mode: str) -> np.ndarray:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--outputs-dir", type=Path, default=Path("../outputs"))
+    parser.add_argument("--outputs-dir", type=Path, default=OUTPUTS_DIR)
     parser.add_argument("--seeds", nargs="+", type=int, required=True)
     parser.add_argument("--aggregate", choices=["logit_mean", "prob_mean", "prob_bottom2_mean"], default="logit_mean")
     parser.add_argument("--color-npz", default="color_pale.npz")

@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 
 import numpy as np
+from settings import OUTPUTS_DIR
+from data_validation import alignment_order, validate_split_payloads
+from fusion import validate_prediction_dump
 
 
 LABELS = [
@@ -45,15 +48,16 @@ def best_threshold(y: np.ndarray, prob: np.ndarray, step: float) -> tuple[float,
 
 
 def load_npz(path: Path) -> dict[str, np.ndarray]:
-    data = np.load(path, allow_pickle=True)
-    return {k: data[k] for k in data.files}
+    with np.load(path, allow_pickle=False) as data:
+        dump = {k: data[k] for k in data.files}
+    validate_prediction_dump(dump)
+    return dump
 
 
 def order_logits(ref: dict[str, np.ndarray], other: dict[str, np.ndarray], split: str) -> np.ndarray:
-    ref_ids = [str(x) for x in ref[f"{split}_ids"]]
-    other_ids = [str(x) for x in other[f"{split}_ids"]]
-    index = {sample_id: i for i, sample_id in enumerate(other_ids)}
-    return other[f"{split}_logits"][[index[sample_id] for sample_id in ref_ids]]
+    order = alignment_order(ref, other, id_key=f"{split}_ids", label_key=f"{split}_labels")
+    return other[f"{split}_logits"][order]
+
 
 
 def eval_probs(y_val: np.ndarray, p_val: np.ndarray, y_test: np.ndarray, p_test: np.ndarray, step: float) -> tuple[float, list[float], list[float]]:
@@ -115,7 +119,7 @@ def sign_count(diff: np.ndarray) -> dict[str, int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--outputs-dir", type=Path, default=Path("../outputs"))
+    parser.add_argument("--outputs-dir", type=Path, default=OUTPUTS_DIR)
     parser.add_argument("--seeds", nargs="+", type=int, required=True)
     parser.add_argument("--threshold-step", type=float, default=0.01)
     parser.add_argument("--n-boot", type=int, default=20000)

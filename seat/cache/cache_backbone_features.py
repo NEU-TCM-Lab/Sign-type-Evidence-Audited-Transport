@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+from geometry import resize_image, bbox_features
+from data_validation import identity_metadata
 import torch
 import torch.nn.functional as F
 from PIL import Image
@@ -67,6 +69,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--dataset-root", type=Path, default=DATASET_ROOT)
     p.add_argument("--manifest-dir", type=Path, default=MANIFEST_DIR)
     p.add_argument("--features-dir", type=Path, default=FEATURES_DIR)
+    p.add_argument("--geometry", choices=["square", "arpad"], default="square")
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--limit", type=int, default=None, help="Debug: cap rows per split.")
     p.add_argument("--overwrite", action="store_true")
@@ -91,19 +94,19 @@ def load_backbone(spec: dict[str, Any], dtype: torch.dtype, device: torch.device
     return model, vision, mean, std
 
 
-def preprocess_image(path: Path, size: int, mean: torch.Tensor, std: torch.Tensor) -> torch.Tensor:
+def preprocess_image(path: Path, size: int, mean: torch.Tensor, std: torch.Tensor, geometry: str = "square") -> torch.Tensor:
     with Image.open(path) as img:
-        img = img.convert("RGB").resize((size, size), resample=Image.Resampling.BILINEAR)
+        img = resize_image(img.convert("RGB"), size, geometry)
         arr = np.asarray(img, dtype=np.float32) / 255.0          # [S,S,3]
     t = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0)       # [1,3,S,S]
     return (t - mean) / std
 
 
-def mask_grid_weights(path: Path, size: int, patch: int, grid: int) -> tuple[torch.Tensor, float, bool]:
+def mask_grid_weights(path: Path, size: int, patch: int, grid: int, geometry: str = "square") -> tuple[torch.Tensor, float, bool]:
     # Identical square resize as the image -> avg_pool to patch grid. Top-left aligned,
     # same remainder handling as a patch-embed conv (here size % patch == 0, so exact).
     with Image.open(path) as m:
-        m = m.convert("L").resize((size, size), resample=Image.Resampling.BILINEAR)
+        m = resize_image(m.convert("L"), size, geometry)
         arr = np.asarray(m, dtype=np.float32)
     if arr.max(initial=0.0) > 1.0:
         arr = arr / 255.0
@@ -144,8 +147,8 @@ def extract_split(args, spec, model, vision, mean, std, device, dtype, split: st
         bw = []  # per-sample (weights, fallback)
         for row in batch:
             assert_label_order(row["label_order"])
-            pix.append(preprocess_image(args.dataset_root / row["image_path"], size, mean, std))
-            w, _s, fb = mask_grid_weights(args.dataset_root / row["mask_path"], size, patch, grid)
+            pix.append(preprocess_image(args.dataset_root / row["image_path"], size, mean, std, args.geometry))
+            w, _s, fb = mask_grid_weights(args.dataset_root / row["mask_path"], size, patch, grid, args.geometry)
             bw.append((w, fb))
         pixel_values = torch.cat(pix, dim=0).to(device=device, dtype=dtype)
 
@@ -171,7 +174,7 @@ def extract_split(args, spec, model, vision, mean, std, device, dtype, split: st
                 mask_feat = (tok * wd[:, None]).sum(dim=0) / wd.sum()
             g_feats.append(global_feat.to(torch.float16).cpu())
             m_feats.append(mask_feat.to(torch.float16).cpu())
-            bboxes.append(torch.tensor(row["bbox_norm"], dtype=torch.float32))
+            bboxes.append(torch.tensor(bbox_features(row, size, args.geometry), dtype=torch.float32))
             labels.append(torch.tensor(row["labels"], dtype=torch.float32))
             ids.append(row["id"])
             img_paths.append(row["image_path"])
@@ -196,6 +199,8 @@ def extract_split(args, spec, model, vision, mean, std, device, dtype, split: st
         "image_paths": img_paths,
         "mask_fallback_count": fallback_count,
     }
+    payload.update(identity_metadata(rows))
+    payload["geometry"] = args.geometry
     out_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save(payload, out_path)
     summary = {
